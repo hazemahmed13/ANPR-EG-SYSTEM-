@@ -1,0 +1,13 @@
+train: G:\Super Anpr\train\images
+val: G:\Super Anpr\valid\images
+test: G:\Super Anpr\test\images
+
+nc: 49
+names: ['1', '2', '3', '4', '5', '6', '7', '7aah', '8', '9', 'Daad', 'Een', 'F', 'Heeh', 'Kaaf', 'Laam', 'License Plate', 'Meem', 'Noon', 'Q', 'R', 'Saad', 'Seen', 'Taa', 'Wow', 'Yeeh', 'Zeen', 'a', 'aa', 'alef', 'b', 'baa', 'car', 'd', 'daal', 'f', 'g', 'geem', 'h', 'k', 'l', 'm', 'n', 'r', 's', 'ss', 't', 'w', 'y']
+
+roboflow:
+  workspace: anpr-rac8v
+  project: super-anpr
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/anpr-rac8v/super-anpr/dataset/1
