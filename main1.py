@@ -7,6 +7,9 @@ from realesrgan import RealESRGANer
 import torch
 from PIL import Image
 import os
+import mysql.connector
+from datetime import datetime
+import uuid
 
 print("جاري تحميل النماذج...")
 
@@ -62,34 +65,71 @@ print("\n✅ تم تحميل جميع النماذج بنجاح\n")
 
 # الترجمة العربية للأحرف
 translations = {
-    '0': '٠', '1': '١', '2': '٢', '3': '٣', '4': '٤', '5': '٥', '6': '٦', '7': '٧', '8': '٨', '9': '٩',
-    '7aah': 'ح', 'Daad': 'ض', 'Een': 'ع', 'Heeh': 'ه', 'Kaaf': 'ك', 'Laam': 'ل', 'Meem': 'م', 'Noon': 'ن', 'Saad': 'ص',
-    'Seen': 'س', 'Taa': 'ط', 'Wow': 'و', 'Yeeh': 'ي', 'Zeen': 'ز', 'alef': 'أ', 'baa': 'ب', 'daal': 'د', 'geem': 'ج',
-    'aa': 'ع', 'g': 'ج', 's': 'س', 'ss': 'ص', 'b': 'ب', 'd': 'د', 't': 'ط', 'h': 'ه', 'k': 'ق', 'f': 'ف',
-    'n': 'ن', 'l': 'ل', 'm': 'م', 'w': 'و', 'y': 'ي', 'r': 'ر',
+    
 }
+
+def connect_to_db():
+    """الربط بقاعدة البيانات"""
+    try:
+        conn = mysql.connector.connect(
+            host='localhost',
+            user='root',
+            password='',
+            database='anpr'
+        )
+        return conn
+    except mysql.connector.Error as err:
+        print(f"❌ خطأ في الاتصال بقاعدة البيانات: {err}")
+        return None
+
+def save_plate_and_vehicle(letters, digits, vehicle_image):
+    """حفظ بيانات اللوحة والمركبة في قاعدة البيانات"""
+    try:
+        conn = connect_to_db()
+        if not conn:
+            return
+
+        cursor = conn.cursor()
+
+        # حفظ بيانات اللوحة في جدول plates
+        sql_plate = "INSERT IGNORE INTO plates (letters, numbers) VALUES (%s, %s)"
+        cursor.execute(sql_plate, (letters[::-1], digits[::-1]))
+        plate_id = cursor.lastrowid  # الحصول على ID اللوحة المحفوظة
+        conn.commit()
+
+        print(f"✅ تم حفظ بيانات اللوحة في جدول plates بالـ ID: {plate_id}")
+
+        # حفظ صورة المركبة في جدول vehicles (اختياري)
+        if vehicle_image is not None:
+            image_path = f"images/{uuid.uuid4()}.jpg"  # توليد مسار فريد للصورة
+            cv2.imwrite(image_path, vehicle_image)  # حفظ الصورة
+
+            # حفظ بيانات المركبة
+            detected_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            sql_vehicle = "INSERT INTO vehicles (plate_id, image_path, detected_at) VALUES (%s, %s, %s)"
+            cursor.execute(sql_vehicle, (plate_id, image_path, detected_at))
+            conn.commit()
+
+            print(f"✅ تم حفظ صورة المركبة في جدول vehicles مع الـ ID: {plate_id}")
+
+        cursor.close()
+        conn.close()
+    except mysql.connector.Error as err:
+        print(f"❌ خطأ أثناء الحفظ في قاعدة البيانات: {err}")
 
 def calculate_image_quality(image):
     """حساب جودة الصورة"""
-    # حساب التباين
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     contrast = np.std(gray)
-    
-    # حساب الحدة
     laplacian = cv2.Laplacian(gray, cv2.CV_64F)
     sharpness = np.var(laplacian)
-    
     return contrast, sharpness
 
 def enhance_plate_image(plate_img):
     try:
-        # حساب جودة الصورة
         contrast, sharpness = calculate_image_quality(plate_img)
-        
-        # تحويل OpenCV image إلى RGB
         plate_rgb = cv2.cvtColor(plate_img, cv2.COLOR_BGR2RGB)
         
-        # تطبيق super resolution فقط إذا كانت الصورة منخفضة الجودة
         if contrast < 50 or sharpness < 100:
             enhanced, _ = upsampler.enhance(plate_rgb, outscale=4)
             print("✅ تم تحسين الصورة باستخدام Real-ESRGAN")
@@ -97,18 +137,14 @@ def enhance_plate_image(plate_img):
             enhanced = plate_rgb
             print("✅ الصورة واضحة، لم يتم استخدام Real-ESRGAN")
         
-        # تحسين التباين والسطوع
         lab = cv2.cvtColor(enhanced, cv2.COLOR_RGB2LAB)
         l, a, b = cv2.split(lab)
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
         cl = clahe.apply(l)
         enhanced_lab = cv2.merge((cl,a,b))
         enhanced = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2RGB)
-        
-        # تحويل الصورة المعالجة مرة تانية لـ BGR
         enhanced_img = cv2.cvtColor(enhanced, cv2.COLOR_RGB2BGR)
         
-        # تطبيق إزالة الضوضاء إذا كانت الصورة منخفضة الجودة
         if contrast < 50 or sharpness < 100:
             enhanced_img = cv2.fastNlMeansDenoisingColored(enhanced_img, None, 10, 10, 7, 21)
         
@@ -123,9 +159,7 @@ def is_english(text):
 
 def clean_text(text):
     """تنظيف النص من الكلمات غير المرغوب فيها"""
-    # إزالة كلمة مصر
     text = text.replace("مصر", "")
-    # إزالة المسافات الزائدة
     text = text.strip()
     return text
 
@@ -136,7 +170,6 @@ def detect_and_ocr(image_path):
             print("❌ خطأ: لا يمكن قراءة الصورة")
             return
             
-        # تغيير حجم الصورة إذا كانت كبيرة جداً
         height, width = image.shape[:2]
         if height > 1200 or width > 1600:
             scale = min(1200/height, 1600/width)
@@ -153,7 +186,6 @@ def detect_and_ocr(image_path):
 
             if class_name == "License Plate":
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
-                # إضافة هامش حول اللوحة
                 margin = 10
                 h, w = image.shape[:2]
                 x1 = max(0, x1 - margin)
@@ -163,18 +195,14 @@ def detect_and_ocr(image_path):
                 
                 plate_img = image[y1:y2, x1:x2]
 
-                # عرض الصورة الأصلية للوحة
                 cv2.imshow("اللوحة الأصلية", plate_img)
                 cv2.waitKey(1)
 
-                # تحسين الصورة باستخدام Real-ESRGAN
                 enhanced_plate = enhance_plate_image(plate_img)
                 
-                # عرض الصورة بعد التحسين
                 cv2.imshow("اللوحة بعد التحسين", enhanced_plate)
                 cv2.waitKey(1)
 
-                # تطبيق OCR على الصورة المحسنة مباشرة
                 result = ocr.ocr(enhanced_plate, cls=True)
 
                 if result and len(result) > 0 and result[0]:
@@ -183,15 +211,13 @@ def detect_and_ocr(image_path):
 
                     for line in result[0]:
                         if len(line) >= 2 and line[1]:
-                            # تنظيف النص وإزالة كلمة مصر
                             text = clean_text(line[1][0])
                             
-                            # تجاهل النصوص الإنجليزية
+
                             if is_english(text):
                                 continue
                                 
                             for char in text:
-                                # تجاهل الحروف الإنجليزية
                                 if is_english(char):
                                     continue
                                     
@@ -201,23 +227,21 @@ def detect_and_ocr(image_path):
                                 elif translated.strip():
                                     letters += translated
 
-                    # تنظيف النتيجة النهائية من كلمة مصر مرة أخرى
                     letters = clean_text(letters)
                     
                     if letters or digits:
                         final_text = letters[::-1] + " " + digits[::-1]
-                        # تنظيف نهائي
                         final_text = clean_text(final_text)
                         
-                        if final_text.strip():  # التأكد من أن النص ليس فارغاً
+                        if final_text.strip():
                             print("🔍 لوحة الترخيص (الحروف ثم الأرقام):", final_text)
 
-                            # رسم المستطيل والنص على الصورة الأصلية
                             cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
                             cv2.putText(image, final_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX,
                                         1.2, (0, 255, 0), 3, cv2.LINE_AA)
 
-                            # عرض النتيجة النهائية
+                            save_plate_and_vehicle(letters, digits, image)
+                            
                             cv2.imshow("النتيجة النهائية", image)
                             cv2.waitKey(0)
                             cv2.destroyAllWindows()
@@ -235,4 +259,4 @@ def detect_and_ocr(image_path):
         print(f"❌ خطأ: {str(e)}")
 
 # تجربة
-detect_and_ocr("Images\\pi.jpg")
+detect_and_ocr("Images\\img11.jpg")
