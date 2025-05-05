@@ -61,12 +61,12 @@ def plate_exists(letters, numbers):
     conn = connect_to_db()
     if not conn:
         return False
-    db_cursor = conn.cursor()
+    db_handler = conn.cursor()
     query = "SELECT id FROM plates WHERE letters = %s AND numbers = %s"
-    db_cursor.execute(query, (letters[::-1], numbers[::-1]))
-    result = db_cursor.fetchone()
+    db_handler.execute(query, (letters[::-1], numbers[::-1]))
+    result = db_handler.fetchone()
     plate_id = result[0] if result else None
-    db_cursor.close()
+    db_handler.close()
     conn.close()
     return plate_id
 
@@ -74,14 +74,14 @@ def log_vehicle_entry(plate_id, image):
     conn = connect_to_db()
     if not conn:
         return
-    db_cursor = conn.cursor()
+    db_handler = conn.cursor()
     image_path = f"images/{uuid.uuid4()}.jpg"
     cv2.imwrite(image_path, image)
     detected_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     sql = "INSERT INTO vehicles (plate_id, image_path, detected_at) VALUES (%s, %s, %s)"
-    db_cursor.execute(sql, (plate_id, image_path, detected_at))
+    db_handler.execute(sql, (plate_id, image_path, detected_at))
     conn.commit()
-    db_cursor.close()
+    db_handler.close()
     conn.close()
     print(f"✅ Vehicle entry logged for plate ID: {plate_id}")
 
@@ -89,12 +89,12 @@ def save_new_plate(letters, numbers, image):
     conn = connect_to_db()
     if not conn:
         return
-    db_cursor = conn.cursor()
+    db_handler = conn.cursor()
     sql = "INSERT INTO plates (letters, numbers) VALUES (%s, %s)"
-    db_cursor.execute(sql, (letters[::-1], numbers[::-1]))
-    plate_id = db_cursor.lastrowid
+    db_handler.execute(sql, (letters[::-1], numbers[::-1]))
+    plate_id = db_handler.lastrowid
     conn.commit()
-    db_cursor.close()
+    db_handler.close()
     conn.close()
     print(f"✅ New plate saved with ID: {plate_id}")
     log_vehicle_entry(plate_id, image)
