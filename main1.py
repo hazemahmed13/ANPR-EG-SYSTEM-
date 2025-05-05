@@ -11,34 +11,34 @@ import mysql.connector
 from datetime import datetime
 import uuid
 
-print("جاري تحميل النماذج...")
+print("Loading models...")
 
-# تحميل موديل YOLO
+# Load YOLO model
 try:
     yolo_model = YOLO("best.pt")
-    print("✅ تم تحميل موديل YOLO بنجاح")
+    print("✅ YOLO model loaded successfully")
 except Exception as e:
-    print(f"❌ خطأ في تحميل موديل YOLO: {e}")
+    print(f"❌ Error loading YOLO model: {e}")
     exit()
 
-# تحميل موديل PaddleOCR
+# Load PaddleOCR model
 try:
     ocr = PaddleOCR(use_angle_cls=True, lang='ar', use_gpu=True)
-    print("✅ تم تحميل موديل PaddleOCR بنجاح")
+    print("✅ PaddleOCR model loaded successfully")
 except Exception as e:
-    print(f"❌ خطأ في تحميل موديل PaddleOCR: {e}")
+    print(f"❌ Error loading PaddleOCR model: {e}")
     exit()
 
-# تحميل موديل Real-ESRGAN
+# Load Real-ESRGAN model
 try:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"✅ تم تحديد الجهاز: {device}")
+    print(f"✅ Device set to: {device}")
     
     model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32)
     model_path = 'Real-ESRGAN/weights/RealESRGAN_x4plus.pth'
     
     if not os.path.exists(model_path):
-        print(f"❌ لم يتم العثور على ملف النموذج في: {model_path}")
+        print(f"❌ Model file not found at: {model_path}")
         exit()
         
     upsampler = RealESRGANer(
@@ -50,75 +50,94 @@ try:
         pre_pad=0,
         device=device
     )
-    print("✅ تم تحميل موديل Real-ESRGAN بنجاح")
+    print("✅ Real-ESRGAN model loaded successfully")
     
-    # اختبار الموديل على صورة صغيرة
+    # Test the model with a small image
     test_img = np.zeros((100, 100, 3), dtype=np.uint8)
     enhanced, _ = upsampler.enhance(test_img, outscale=4)
-    print("✅ تم اختبار موديل Real-ESRGAN بنجاح")
+    print("✅ Real-ESRGAN model tested successfully")
     
 except Exception as e:
-    print(f"❌ خطأ في تحميل موديل Real-ESRGAN: {e}")
+    print(f"❌ Error loading Real-ESRGAN model: {e}")
     exit()
 
-print("\n✅ تم تحميل جميع النماذج بنجاح\n")
+print("\n✅ All models loaded successfully\n")
 
-# الترجمة العربية للأحرف
-translations = {
-    
-}
+# Arabic translations for characters (if any)
+translations = {}
 
 def connect_to_db():
-    """الربط بقاعدة البيانات"""
+    """Connect to the database."""
     try:
         conn = mysql.connector.connect(
             host='localhost',
             user='root',
             password='',
-            database='anpr'
+            database='anpr_system'  # Updated database name
         )
-        return conn
+        if conn.is_connected():
+            print("✅ Successfully connected to the database.")
+            return conn
+        else:
+            print("❌ Failed to connect to the database.")
+            return None
     except mysql.connector.Error as err:
-        print(f"❌ خطأ في الاتصال بقاعدة البيانات: {err}")
+        print(f"❌ Database connection error: {err}")
         return None
 
 def save_plate_and_vehicle(letters, digits, vehicle_image):
-    """حفظ بيانات اللوحة والمركبة في قاعدة البيانات"""
+    """Log or save plate and vehicle data into the database"""
+    conn = None
     try:
         conn = connect_to_db()
         if not conn:
             return
 
-        cursor = conn.cursor()
+        # Using a better name for database operation
+        db_operator = conn.cursor()  # Changed from db_executor to db_operator
 
-        # حفظ بيانات اللوحة في جدول plates
-        sql_plate = "INSERT IGNORE INTO plates (letters, numbers) VALUES (%s, %s)"
-        cursor.execute(sql_plate, (letters[::-1], digits[::-1]))
-        plate_id = cursor.lastrowid  # الحصول على ID اللوحة المحفوظة
-        conn.commit()
+        # Check if the plate already exists
+        sql_check = "SELECT plate_id FROM plates WHERE letters = %s AND numbers = %s"
+        db_operator.execute(sql_check, (letters[::-1], digits[::-1]))
+        existing_plate = db_operator.fetchone()
 
-        print(f"✅ تم حفظ بيانات اللوحة في جدول plates بالـ ID: {plate_id}")
+        if existing_plate:
+            plate_id = existing_plate[0]
+            print(f"✅ Plate already exists in the database with ID: {plate_id}")
+            print("🟢 Vehicle login recorded.")
+        else:
+            # Save new plate data
+            sql_plate = "INSERT INTO plates (letters, numbers) VALUES (%s, %s)"
+            db_operator.execute(sql_plate, (letters[::-1], digits[::-1]))
+            plate_id = db_operator.lastrowid
+            conn.commit()
+            print(f"✅ New plate saved with ID: {plate_id}")
 
-        # حفظ صورة المركبة في جدول vehicles (اختياري)
+        # Save vehicle image
         if vehicle_image is not None:
-            image_path = f"images/{uuid.uuid4()}.jpg"  # توليد مسار فريد للصورة
-            cv2.imwrite(image_path, vehicle_image)  # حفظ الصورة
+            image_path = f"images/{uuid.uuid4()}.jpg"
+            os.makedirs(os.path.dirname(image_path), exist_ok=True)  # Ensure directory exists
+            cv2.imwrite(image_path, vehicle_image)
 
-            # حفظ بيانات المركبة
             detected_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            sql_vehicle = "INSERT INTO vehicles (plate_id, image_path, detected_at) VALUES (%s, %s, %s)"
-            cursor.execute(sql_vehicle, (plate_id, image_path, detected_at))
+            sql_vehicle = "INSERT INTO vehicles (plate_id, vehicle_image, created_at) VALUES (%s, %s, %s)"
+            db_operator.execute(sql_vehicle, (plate_id, image_path, detected_at))
             conn.commit()
 
-            print(f"✅ تم حفظ صورة المركبة في جدول vehicles مع الـ ID: {plate_id}")
+            print("📸 Vehicle login recorded with image.")
 
-        cursor.close()
-        conn.close()
+        conn.commit()  # Commit to ensure all changes are saved
     except mysql.connector.Error as err:
-        print(f"❌ خطأ أثناء الحفظ في قاعدة البيانات: {err}")
+        print(f"❌ Database error: {err}")
+    finally:
+        # Ensure closing of operator and connection
+        if db_operator:
+            db_operator.close()
+        if conn:
+            conn.close()
 
 def calculate_image_quality(image):
-    """حساب جودة الصورة"""
+    """Calculate image quality."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     contrast = np.std(gray)
     laplacian = cv2.Laplacian(gray, cv2.CV_64F)
@@ -132,10 +151,10 @@ def enhance_plate_image(plate_img):
         
         if contrast < 50 or sharpness < 100:
             enhanced, _ = upsampler.enhance(plate_rgb, outscale=4)
-            print("✅ تم تحسين الصورة باستخدام Real-ESRGAN")
+            print("✅ Image enhanced using Real-ESRGAN")
         else:
             enhanced = plate_rgb
-            print("✅ الصورة واضحة، لم يتم استخدام Real-ESRGAN")
+            print("✅ Image is clear, no enhancement needed")
         
         lab = cv2.cvtColor(enhanced, cv2.COLOR_RGB2LAB)
         l, a, b = cv2.split(lab)
@@ -150,15 +169,15 @@ def enhance_plate_image(plate_img):
         
         return enhanced_img
     except Exception as e:
-        print(f"❌ خطأ في تحسين الصورة: {e}")
+        print(f"❌ Error enhancing image: {e}")
         return plate_img
 
 def is_english(text):
-    """التحقق مما إذا كان النص باللغة الإنجليزية"""
+    """Check if the text is in English."""
     return all(ord('A') <= ord(c) <= ord('Z') or ord('a') <= ord(c) <= ord('z') for c in text)
 
 def clean_text(text):
-    """تنظيف النص من الكلمات غير المرغوب فيها"""
+    """Clean unwanted characters."""
     text = text.replace("مصر", "")
     text = text.strip()
     return text
@@ -167,7 +186,7 @@ def detect_and_ocr(image_path):
     try:
         image = cv2.imread(image_path)
         if image is None:
-            print("❌ خطأ: لا يمكن قراءة الصورة")
+            print("❌ Error: Unable to read image")
             return
             
         height, width = image.shape[:2]
@@ -176,7 +195,7 @@ def detect_and_ocr(image_path):
             new_height = int(height * scale)
             new_width = int(width * scale)
             image = cv2.resize(image, (new_width, new_height))
-            print(f"✅ تم تغيير حجم الصورة إلى {new_width}x{new_height}")
+            print(f"✅ Image resized to {new_width}x{new_height}")
             
         results = yolo_model(image)[0]
 
@@ -195,12 +214,12 @@ def detect_and_ocr(image_path):
                 
                 plate_img = image[y1:y2, x1:x2]
 
-                cv2.imshow("اللوحة الأصلية", plate_img)
+                cv2.imshow("Original Plate", plate_img)
                 cv2.waitKey(1)
 
                 enhanced_plate = enhance_plate_image(plate_img)
                 
-                cv2.imshow("اللوحة بعد التحسين", enhanced_plate)
+                cv2.imshow("Enhanced Plate", enhanced_plate)
                 cv2.waitKey(1)
 
                 result = ocr.ocr(enhanced_plate, cls=True)
@@ -216,7 +235,7 @@ def detect_and_ocr(image_path):
 
                             if is_english(text):
                                 continue
-                                
+                                 
                             for char in text:
                                 if is_english(char):
                                     continue
@@ -234,7 +253,7 @@ def detect_and_ocr(image_path):
                         final_text = clean_text(final_text)
                         
                         if final_text.strip():
-                            print("🔍 لوحة الترخيص (الحروف ثم الأرقام):", final_text)
+                            print("🔍 License Plate (letters then numbers):", final_text)
 
                             cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
                             cv2.putText(image, final_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX,
@@ -242,21 +261,22 @@ def detect_and_ocr(image_path):
 
                             save_plate_and_vehicle(letters, digits, image)
                             
-                            cv2.imshow("النتيجة النهائية", image)
+
+                            cv2.imshow("Final Result", image)
                             cv2.waitKey(0)
                             cv2.destroyAllWindows()
                         else:
-                            print("❌ لم يتم العثور على نص صالح بعد التنظيف")
+                            print("❌ No valid text found after cleaning")
                     else:
-                        print("❌ لم يتم العثور على نص صالح")
+                        print("❌ No valid text found")
                 else:
-                    print("❌ لم يتم العثور على نص")
+                    print("❌ No text found")
                 break
         else:
-            print("❌ لم يتم العثور على لوحة ترخيص")
+            print("❌ No license plate detected")
             
     except Exception as e:
-        print(f"❌ خطأ: {str(e)}")
+        print(f"❌ Error: {str(e)}")
 
-# تجربة
+# Test
 detect_and_ocr("Images\\img11.jpg")
