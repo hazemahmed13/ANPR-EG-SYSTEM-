@@ -10,6 +10,7 @@ from realesrgan import RealESRGANer
 from PIL import Image
 import torch
 import mysql.connector
+import re
 
 # تحميل النماذج
 print("جاري تحميل النماذج...")
@@ -57,13 +58,31 @@ def connect_to_db():
         print(f"❌ DB Error: {err}")
         return None
 
+def split_and_filter_letters(letters):
+    groups = [letters[i:i+3] for i in range(0, len(letters), 3)]
+    filtered = []
+    for group in groups:
+        # لو المجموعة فيها أي حرف من كلمة مصر تجاهلها
+        if any(c in group for c in 'مصر'):
+            continue
+        filtered.append(group)
+    return ''.join(filtered)
+
+def clean_text(text):
+    text = text.replace(" ", "")
+    # امسح كل أشكال كلمة مصر حتى لو فيها مسافات أو تشكيل
+    text = re.sub(r"م\s*ص\s*ر", "", text)
+    text = re.sub(r"egypt", "", text, flags=re.IGNORECASE)
+    text = text.strip()
+    return text
+
 def plate_exists(letters, numbers):
     conn = connect_to_db()
     if not conn:
         return False
     db_handler = conn.cursor()
     query = "SELECT id FROM plates WHERE letters = %s AND numbers = %s"
-    db_handler.execute(query, (letters[::-1], numbers[::-1]))
+    db_handler.execute(query, (letters, numbers))  # Removed the [::-1] here
     result = db_handler.fetchone()
     plate_id = result[0] if result else None
     db_handler.close()
@@ -91,7 +110,7 @@ def save_new_plate(letters, numbers, image):
         return
     db_handler = conn.cursor()
     sql = "INSERT INTO plates (letters, numbers) VALUES (%s, %s)"
-    db_handler.execute(sql, (letters[::-1], numbers[::-1]))
+    db_handler.execute(sql, (letters, numbers))  # Removed the [::-1] here
     plate_id = db_handler.lastrowid
     conn.commit()
     db_handler.close()
@@ -126,9 +145,6 @@ def enhance_plate_image(plate_img):
 def is_english(text):
     return all(ord('A') <= ord(c) <= ord('Z') or ord('a') <= ord(c) <= ord('z') for c in text)
 
-def clean_text(text):
-    return text.replace("مصر", "").strip()
-
 # ✅ بدء الكاميرا الخارجية
 cap = cv2.VideoCapture(1)  # كاميرا خارجية (غير مدمجة)
 
@@ -151,32 +167,44 @@ while True:
             ocr_result = ocr.ocr(enhanced, cls=True)
 
             if ocr_result and ocr_result[0]:
-                letters, digits = "", ""
+                letters = ""
+                digits = ""
+
+                # First pass: collect all characters
                 for line in ocr_result[0]:
-                    if len(line) >= 2:
+                    if len(line) >= 2 and line[1]:
                         text = clean_text(line[1][0])
-                        if is_english(text): continue
+                        if not text:
+                            continue
+                        
                         for char in text:
-                            if is_english(char): continue
+                            if is_english(char):
+                                continue
                             translated = translations.get(char, char)
                             if translated.isnumeric():
                                 digits += translated
                             elif translated.strip():
                                 letters += translated
 
-                if letters or digits:
-                    letters = clean_text(letters)
-                    digits = clean_text(digits)
-                    final_text = letters[::-1] + " " + digits[::-1]
+                # Process letters and digits separately
+                letters_clean = ''.join([c for c in letters if not c.isdigit()])
+                digits_clean = ''.join([c for c in digits if c.isdigit()])
+                
+                # Only reverse letters, keep digits as is
+                letters_final = split_and_filter_letters(letters_clean)[::-1]
+                digits_final = digits_clean[::-1]  # Reverse digits for display
+
+                if letters_final or digits_final:
+                    final_text = letters_final + " " + digits_final
                     print(f"🔍 Detected Plate: {final_text}")
 
-                    plate_id = plate_exists(letters, digits)
+                    plate_id = plate_exists(letters_final, digits_clean)  # Use non-reversed digits for DB
                     if plate_id:
                         print("📌 اللوحة موجودة بالفعل، تسجيل دخول فقط")
                         log_vehicle_entry(plate_id, frame)
                     else:
                         print("📌 لوحة جديدة، يتم الحفظ...")
-                        save_new_plate(letters, digits, frame)
+                        save_new_plate(letters_final, digits_clean, frame)  # Use non-reversed digits for DB
 
                     # عرض النتيجة على الفريم
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)

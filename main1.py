@@ -231,6 +231,12 @@ def split_and_filter_letters(letters):
         filtered.append(group)
     return ''.join(filtered)
 
+def to_arabic_digits(s):
+    western = '0123456789'
+    arabic = '٠١٢٣٤٥٦٧٨٩'
+    trans = str.maketrans(western, arabic)
+    return s.translate(trans)
+
 def detect_and_ocr(image_path):
     try:
         image = cv2.imread(image_path)
@@ -277,13 +283,13 @@ def detect_and_ocr(image_path):
                     letters = ""
                     digits = ""
 
+                    # First pass: collect all characters
                     for line in result[0]:
                         if len(line) >= 2 and line[1]:
                             text = clean_text(line[1][0])
-                            
-                            # Skip if the text is empty after cleaning
                             if not text:
                                 continue
+                            
 
                             for char in text:
                                 if is_english(char):
@@ -294,16 +300,20 @@ def detect_and_ocr(image_path):
                                 elif translated.strip():
                                     letters += translated
 
-                    # Combine, clean, then split again
-                    full_plate = letters + digits
-                    full_plate_clean = clean_text(full_plate)
-                    letters_clean = ''.join([c for c in full_plate_clean if not c.isdigit()])
-                    digits_clean = ''.join([c for c in full_plate_clean if c.isdigit()])
+                    # Process letters and digits separately
+                    letters_clean = ''.join([c for c in letters if not c.isdigit()])
+                    digits_clean = ''.join([c for c in digits if c.isdigit()])
 
-                    letters_final = split_and_filter_letters(letters_clean)
-                    print(f"DEBUG: filtered letters='{letters_final}', digits='{digits_clean}'")
-                    save_plate_and_vehicle(letters_final, digits_clean, image)
-                    
+                    # Only reverse letters, keep digits as is
+                    letters_final = split_and_filter_letters(letters_clean)[::-1]
+
+                    digits_final = digits_clean[::-1]
+
+                    print(f"DEBUG: Original digits='{digits_clean}'")
+                    print(f"DEBUG: Reversed digits='{digits_final}'")
+                    print(f"DEBUG: Final letters='{letters_final}'")
+
+                    save_plate_and_vehicle(letters_final, digits_final, image)
 
                     cv2.imshow("Final Result", image)
                     cv2.waitKey(0)
