@@ -17,7 +17,7 @@ print("Loading models...")
 
 # Load YOLO model
 try:
-    yolo_model = YOLO("best.pt")
+    yolo_model = YOLO("weights.pt")
     print("✅ YOLO model loaded successfully")
 except Exception as e:
     print(f"❌ Error loading YOLO model: {e}")
@@ -107,7 +107,7 @@ def save_plate_and_vehicle(letters, digits, vehicle_image):
         plate = db_operator.fetchone()
 
         if not plate:
-            print("❌ Plate not found in database.")
+            print("❌ Access Denied.")
             return
 
         plate_id = plate[0]

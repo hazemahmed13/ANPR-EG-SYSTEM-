@@ -1,0 +1,2 @@
+2025-05-09 03:55:19,171 - ERROR - System error: Test image not found: test_plate.jpg
+2025-05-09 03:56:08,227 - ERROR - OCR error: tesseract is not installed or it's not in your PATH. See README file for more information.
